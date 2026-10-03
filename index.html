@@ -29,6 +29,7 @@
   .result { font-size:14px; margin-bottom:10px; display:none; }
   .result .big { font-size:22px; font-weight:700; }
   .result a { color:var(--ink); }
+  .result .bot { margin-top:6px; font-size:13px; color:var(--muted); }
   #map { height:100%; }
   .final { position:fixed; inset:0; background:rgba(255,255,255,.96); display:none; place-items:center; z-index:2000; }
   .final > div { max-width:420px; padding:24px; }
@@ -67,7 +68,9 @@
 </div></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script src="data.js"></script>
+<script src="heat.js"></script>
 <script src="states.js"></script>
 <script>
 const ROUNDS = 5;
@@ -83,7 +86,7 @@ const dot = (color, r) => ({ radius: r, color: "#fff", weight: 2, fillColor: col
 let game, cur, guess, layers = [];
 
 // Daily game: same 5 checklists for everyone, keyed to the date in New York.
-const PINNED = {};  // "YYYY-MM-DD": [checklist ids]
+const PINNED = { "2026-10-02": ["S151905707","S50118531","S317241391","S238377048","S302066228"] };  // "YYYY-MM-DD": [checklist ids]
 const TODAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 function rng(seedStr) {
   let h = 2166136261;
@@ -117,7 +120,7 @@ const fmtTime = h => (h % 12 || 12) + (h < 12 ? " AM" : " PM");
 const fmtDur = m => m >= 60 ? `${Math.floor(m/60)} h${m % 60 ? " " + (m % 60) + " min" : ""}` : `${m} min`;
 
 function start(daily) {
-  game = { list: pick(daily), daily, i: 0, total: 0, log: [] };
+  game = { list: pick(daily), daily, i: 0, total: 0, bot: 0, log: [] };
   document.getElementById("final").style.display = "none";
   show();
 }
@@ -148,15 +151,24 @@ map.on("click", e => {
 function submit() {
   const g = guess.getLatLng(), t = L.latLng(cur.lat, cur.lon), d = km(g, t), p = points(d);
   game.total += p; game.revealed = true;
-  game.log.push({ st: cur.st, d, p });
+  game.log.push({ st: cur.st, d, p, b: ((window.HEAT || {})[cur.id] || {}).b?.[2] });
+  const hz = (window.HEAT || {})[cur.id];
+  if (hz && L.heatLayer) {
+    layers.push(L.heatLayer(hz.h, { radius: 22, blur: 18, maxZoom: 7, minOpacity: 0.25,
+      gradient: { 0.2: "#fde9a8", 0.5: "#f6a93b", 0.8: "#e3561f", 1: "#a3160f" } }).addTo(map));
+    layers.push(L.marker([hz.b[0], hz.b[1]], { icon: L.divIcon({ className: "", iconSize: [14, 14],
+      html: '<div style="width:12px;height:12px;background:#fff;border:2px solid #151515;transform:rotate(45deg)"></div>' }) }).addTo(map));
+    game.bot = (game.bot || 0) + hz.b[2];
+  }
   layers.push(L.polyline([g, t], { color: "#151515", weight: 1.5, dashArray: "4 4" }).addTo(map));
   layers.push(L.circleMarker(t, dot("#151515", 8)).addTo(map));
-  map.fitBounds(L.latLngBounds([g, t]).pad(0.3), { maxZoom: 9 });
+  map.fitBounds(L.latLngBounds(hz ? [g, t, [hz.b[0], hz.b[1]]] : [g, t]).pad(0.35), { maxZoom: 7 });
   const mi = Math.round(d * 0.621371);
   const r = document.getElementById("result");
   r.innerHTML = `<div class="big">${p.toLocaleString()} pts</div>` +
     `${mi.toLocaleString()} mi off · <b>${cur.hs || "Hotspot"}</b>, ${cur.st}<br>` +
-    `${MONTHS[cur.m - 1]} ${cur.d}, ${cur.y} · <a href="https://ebird.org/checklist/${cur.id}" target="_blank" rel="noopener">see the checklist</a>`;
+    `${MONTHS[cur.m - 1]} ${cur.d}, ${cur.y} · <a href="https://ebird.org/checklist/${cur.id}" target="_blank" rel="noopener">see the checklist</a>` +
+    (hz ? `<div class="bot">◇ Bot: ${hz.b[2].toLocaleString()} pts · glow = where these birds fit this month</div>` : "");
   r.style.display = "block";
   document.getElementById("score").textContent = `${game.total.toLocaleString()} pts`;
   const b = document.getElementById("btn");
@@ -168,7 +180,9 @@ function next() {
   if (++game.i < ROUNDS) return show();
   document.getElementById("ftotal").textContent = `${game.total.toLocaleString()} pts`;
   document.getElementById("ftable").innerHTML = game.log.map((x, i) =>
-    `<tr><td>${i + 1}. ${x.st}</td><td>${Math.round(x.d * 0.621371).toLocaleString()} mi</td><td>${x.p.toLocaleString()}</td></tr>`).join("");
+    `<tr><td>${i + 1}. ${x.st}</td><td>${Math.round(x.d * 0.621371).toLocaleString()} mi</td><td>${x.p.toLocaleString()}</td><td>${x.b == null ? "" : x.b.toLocaleString()}</td></tr>`).join("") +
+    (game.bot != null ? `<tr><td colspan="2"><b>Bot</b></td><td></td><td><b>${game.bot.toLocaleString()}</b></td></tr>` : "");
+  document.getElementById("ftable").insertAdjacentHTML("afterbegin", `<tr><td></td><td></td><td>You</td><td>Bot</td></tr>`);
   document.getElementById("final").style.display = "grid";
 }
 document.getElementById("again").onclick = () => start(false);
